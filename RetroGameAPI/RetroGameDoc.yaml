@@ -1,0 +1,291 @@
+openapi: 3.1.0
+info:
+  title: Retro Game Exchange
+  description: Retro Game Exchange
+  version: 1.0.0
+servers:
+  - url: 'https://api.retrogameexchange.com/v1'
+paths:
+  /games:
+    post:
+      summary: Add a new game to the exchange list
+      operationId: addGame
+      requestBody:
+        description: Game object that needs to be added to the exchange
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Game'
+      responses:
+        '201':
+          description: Game created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Game'
+        '400':
+          description: Invalid input
+  /games/{gameId}:
+    put:
+      summary: Replace all properties of a game (full update)
+      operationId: replaceGame
+      parameters:
+        - name: gameId
+          in: path
+          required: true
+          description: ID of the game to replace
+          schema:
+            type: integer
+      requestBody:
+        description: Updated game object
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Game'
+      responses:
+        '200':
+          description: Game replaced successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Game'
+        '404':
+          description: Game not found
+    patch:
+      summary: Update certain properties of a game (partial update)
+      operationId: updateGame
+      parameters:
+        - name: gameId
+          in: path
+          required: true
+          description: ID of the game to update
+          schema:
+            type: integer
+      requestBody:
+        description: Partial game object
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GameUpdate'
+      responses:
+        '200':
+          description: Game updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Game'
+        '404':
+          description: Game not found
+    delete:
+      summary: Remove a game from the exchange list
+      operationId: deleteGame
+      parameters:
+        - name: gameId
+          in: path
+          required: true
+          description: ID of the game to remove
+          schema:
+            type: integer
+      responses:
+        '204':
+          description: Game removed successfully
+        '404':
+          description: Game not found
+
+  /users:
+    post:
+      summary: Add a new user to the exchange
+      operationId: addUser
+      requestBody:
+        description: User object that needs to be added
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/User'
+      responses:
+        '201':
+          description: User created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '400':
+          description: Invalid input
+  /users/{userId}:
+    put:
+      summary: Replace all properties of a user (full update)
+      operationId: replaceUser
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          description: ID of the user to replace
+          schema:
+            type: integer
+      requestBody:
+        description: Updated user object
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/User'
+      responses:
+        '200':
+          description: User replaced successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '404':
+          description: User not found
+    patch:
+      summary: Update certain properties of a user (partial update)
+      operationId: updateUser
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          description: ID of the user to update
+          schema:
+            type: integer
+      requestBody:
+        description: Partial user object
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UserUpdate'
+      responses:
+        '200':
+          description: User updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '404':
+          description: User not found
+    delete:
+      summary: Remove a user from the exchange
+      operationId: deleteUser
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          description: ID of the user to remove
+          schema:
+            type: integer
+      responses:
+        '204':
+          description: User removed successfully
+        '404':
+          description: User not found
+
+components:
+  schemas:
+    Game:
+      type: object
+      required:
+        - title
+        - platform
+        - madeBy
+      properties:
+        id:
+          type: integer
+          format: int64
+          readOnly: true
+          example: 1
+        title:
+          type: string
+          example: "Super Mario World"
+        platform:
+          type: string
+          example: "SNES"
+        year:
+          type: integer
+          example: 1990
+        condition:
+          type: string
+          example: "Mint"
+        madeBy:
+          $ref: '#/components/schemas/Company'
+
+    GameUpdate:
+      type: object
+      properties:
+        title:
+          type: string
+          example: "Super Mario World"
+        platform:
+          type: string
+          example: "SNES"
+        year:
+          type: integer
+          example: 1990
+        condition:
+          type: string
+          example: "Mint"
+        madeBy:
+          $ref: '#/components/schemas/Company'
+
+    User:
+      type: object
+      required:
+        - username
+        - email
+      properties:
+        id:
+          type: integer
+          format: int64
+          readOnly: true
+          example: 101
+        username:
+          type: string
+          example: "johndoe"
+        email:
+          type: string
+          format: email
+          example: "john.doe@example.com"
+        fullName:
+          type: string
+          example: "John Doe"
+
+    UserUpdate:
+      type: object
+      properties:
+        username:
+          type: string
+          example: "johndoe"
+        email:
+          type: string
+          format: email
+          example: "john.doe@example.com"
+        fullName:
+          type: string
+          example: "John Doe"
+
+    Company:
+      type: object
+      required:
+        - companyName
+        - yearFounded
+        - location
+      properties: 
+        id:
+          type: integer
+          format: int64
+          example: 50
+        companyName:
+          type: string
+          example: "Nintendo"
+        yearFounded:
+          type: integer
+          example: 1889
+        location:
+          type: string
+          example: "Kyoto, Japan"
+        
+
