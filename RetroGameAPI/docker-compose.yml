@@ -12,9 +12,12 @@ services:
       - DB_NAME=RetroGameDB
       - JWT_SECRET=secret
     networks:
-      - retrogameapi_game-network
+      - game-network
     ports:
       - "8081:8080"
+    depends_on:
+      db:
+        condition: service_healthy
 
 
   api2:
@@ -30,9 +33,12 @@ services:
       - JWT_SECRET=secret
 
     networks:
-      - retrogameapi_game-network
+      - game-network
     ports:
       - "8082:8080"
+    depends_on:
+      db:
+        condition: service_healthy
 
 
   nginx:
@@ -43,12 +49,35 @@ services:
     ports:
       - "80:80"
     networks:
-      - retrogameapi_game-network
+      - game-network
     depends_on:
       - api1
       - api2
+  db:
+    image: mysql:latest
+    container_name: CSC380_mySQL
+    environment:
+      - MYSQL_ROOT_PASSWORD=abc123
+      - MYSQL_DATABASE=RetroGameDB
+    volumes:
+      - db_data:/var/lib/mysql
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    ports:
+      - "3307:3307"
+    networks:
+      - game-network
+    healthcheck:
+      test: [ "CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-pabc123" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
 
+
+
+volumes:
+  db_data:
 
 networks:
-  retrogameapi_game-network:
-    external: true
+  game-network:
+    driver: bridge
