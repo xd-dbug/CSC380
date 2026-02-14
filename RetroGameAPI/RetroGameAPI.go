@@ -1,10 +1,13 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
+	"net/mail"
 	"os"
 	"strconv"
 	"strings"
@@ -13,11 +16,13 @@ import (
 	"github.com/gin-gonic/gin"
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/segmentio/kafka-go"
 	"golang.org/x/crypto/bcrypt"
 )
 
 var db *sql.DB
 var jwtSecret []byte
+var kafkaWriter *kafka.Writer
 
 type game struct {
 	ID        int     `json:"id"`
@@ -115,6 +120,22 @@ type CustomClaims struct {
 	jwt.RegisteredClaims
 }
 
+type Event string
+
+const (
+	OfferCreated  Event = "OfferCreated"
+	OfferAccepted Event = "OfferAccepted"
+	OfferRejected Event = "OfferRejected"
+)
+
+type EmailNotification struct {
+	EventType  Event         `json:"eventType"`
+	Recipient1 mail.Address  `json:"recipient1"`
+	Recipient2 *mail.Address `json:"recipient2"`
+	Subject    string        `json:"subject"`
+	Body       string        `json:"body"`
+}
+
 func init() {
 	dbUser := os.Getenv("DB_USER")
 	dbPassword := os.Getenv("DB_PASSWORD")
@@ -122,6 +143,7 @@ func init() {
 	dbPort := os.Getenv("DB_PORT")
 	dbName := os.Getenv("DB_NAME")
 	jwtSecretStr := os.Getenv("JWT_SECRET")
+	kafkaBroker := os.Getenv("KAFKA_BROKER")
 
 	if dbUser == "" {
 		dbUser = "root"
@@ -141,7 +163,15 @@ func init() {
 	if jwtSecretStr == "" {
 		jwtSecretStr = "secret"
 	}
+	if kafkaBroker == "" {
+		kafkaBroker = "broker:19092"
+	}
 
+	kafkaWriter = &kafka.Writer{
+		Addr:     kafka.TCP(kafkaBroker),
+		Topic:    "notificationEvents",
+		Balancer: &kafka.LeastBytes{},
+	}
 	jwtSecret = []byte(jwtSecretStr)
 
 	dsn := fmt.Sprintf("%s:%s@tcp(%s:%s)/%s", dbUser, dbPassword, dbHost, dbPort, dbName)
@@ -157,6 +187,22 @@ func init() {
 	}
 
 	fmt.Println("Connected to MySQL database successfully")
+}
+
+func publishEmailNotification(notification EmailNotification) error {
+	err := kafkaWriter.WriteMessages(context.Background(),
+		kafka.Message{
+			Key:   []byte("email"),
+			Value: []byte(notification),
+		})
+	if err != nil {
+		log.Panic("failed to write messages: ", err)
+	}
+
+	if err := kafkaWriter.Close(); err != nil {
+		log.Panic("failed to close writer: ", err)
+	}
+	return nil
 }
 
 // JWT AUTHENTICATION MIDDLEWARE
