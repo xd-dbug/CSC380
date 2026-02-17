@@ -100,6 +100,22 @@ services:
     networks:
       - game-network
 
+  email-consumer:
+    build:
+      context: ./email-consumer
+    container_name: email_consumer
+    environment:
+      - KAFKA_BROKER=broker:19092
+      - SMTP_HOST=sandbox.smtp.mailtrap.io
+      - SMTP_PORT=25
+      - SMTP_USER=51a3488ee53d93
+      - SMTP_PASSWORD=d783494d9c8c92
+    networks:
+      - game-network
+    depends_on:
+      broker:
+        condition: service_started
+
 
 
 volumes:

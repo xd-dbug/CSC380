@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"log"
 	"net/http"
 	"net/mail"
 	"os"
@@ -79,6 +78,11 @@ type tradeOfferRequest struct {
 	OfferedGameID int `json:"offeredGameId" binding:"required"`
 }
 
+type passwordUpdateRequest struct {
+	CurrentPassword string `json:"currentPassword" binding:"required"`
+	NewPassword     string `json:"newPassword" binding:"required"`
+}
+
 type tradeOfferResponse struct {
 	ID              int    `json:"id"`
 	CreatedByUserID int    `json:"createdByUserId"`
@@ -123,9 +127,10 @@ type CustomClaims struct {
 type Event string
 
 const (
-	OfferCreated  Event = "OfferCreated"
-	OfferAccepted Event = "OfferAccepted"
-	OfferRejected Event = "OfferRejected"
+	PasswordChanged Event = "PasswordChanged"
+	OfferCreated    Event = "OfferCreated"
+	OfferAccepted   Event = "OfferAccepted"
+	OfferRejected   Event = "OfferRejected"
 )
 
 type EmailNotification struct {
@@ -190,18 +195,21 @@ func init() {
 }
 
 func publishEmailNotification(notification EmailNotification) error {
-	err := kafkaWriter.WriteMessages(context.Background(),
-		kafka.Message{
-			Key:   []byte("email"),
-			Value: []byte(notification),
-		})
+	jsonByte, err := json.Marshal(notification)
+
 	if err != nil {
-		log.Panic("failed to write messages: ", err)
+		return err
 	}
 
-	if err := kafkaWriter.Close(); err != nil {
-		log.Panic("failed to close writer: ", err)
+	err = kafkaWriter.WriteMessages(context.Background(),
+		kafka.Message{
+			Key:   []byte("email"),
+			Value: jsonByte,
+		})
+	if err != nil {
+		return err
 	}
+
 	return nil
 }
 
@@ -874,6 +882,79 @@ func updateUser(c *gin.Context) {
 	c.JSON(http.StatusOK, returnUser)
 }
 
+func updatePassword(c *gin.Context) {
+	// 1. Get the authenticated userID from the context (set by authMiddleware)
+	authenticatedUserID, exists := c.Get("userID")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "User not authenticated"})
+		return
+	}
+
+	// 2. Get the target ID from the URL parameter
+	targetID, err := strconv.Atoi(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid ID"})
+		return
+	}
+
+	// 3. SECURITY CHECK: Compare the IDs
+	// This ensures a user can only change THEIR OWN password.
+	if authenticatedUserID.(int) != targetID {
+		c.JSON(http.StatusForbidden, gin.H{"error": "You are not authorized to change this user's password"})
+		return
+	}
+
+	// 4. Bind the request body
+	var req passwordUpdateRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// 5. Look up the user in the database to get their stored password hash and email
+	var storedPassword string
+	var email string
+	row := db.QueryRow("SELECT Password, Email FROM User WHERE UserID = ?", targetID)
+	err = row.Scan(&storedPassword, &email)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"message": "user not found"})
+		return
+	}
+
+	// 6. Verify the current password is correct
+	// This is important because it ensures the person requesting the change
+	// actually knows the current credentials, preventing session hijacking attacks.
+	if !verifyPassword(req.CurrentPassword, storedPassword) {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Current password is incorrect"})
+		return
+	}
+
+	// 7. Hash the new password
+	hashedPassword, err := hashPassword(req.NewPassword)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Could not hash password"})
+		return
+	}
+
+	// 8. Update the database
+	_, err = db.Exec("UPDATE User SET Password = ? WHERE UserID = ?", hashedPassword, targetID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	// 9. Send the notification
+	notification := EmailNotification{
+		EventType:  PasswordChanged,
+		Recipient1: mail.Address{Address: email},
+		Subject:    "Security Alert: Password Changed",
+		Body:       "The password for your RetroGameAPI account has been successfully updated.",
+	}
+	_ = publishEmailNotification(notification) // Log error if needed, but don't fail the request
+
+	c.JSON(http.StatusOK, gin.H{"message": "Password updated successfully"})
+}
+
 func deleteUser(c *gin.Context) {
 	id, err := strconv.Atoi(c.Param("id"))
 	if err != nil {
@@ -971,6 +1052,37 @@ func createTradeOffer(c *gin.Context) {
 		Status:          "pending",
 		CreatedAt:       now,
 		UpdatedAt:       now,
+	}
+
+	offereeRow := db.QueryRow("SELECT Email FROM User WHERE UserID = ?", targetOwnerID)
+	offerorRow := db.QueryRow("SELECT Email FROM User WHERE UserID = ?", userID)
+
+	var offereeEmail string
+	var offerorEmail string
+
+	err = offereeRow.Scan(&offereeEmail)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	err = offerorRow.Scan(&offerorEmail)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	email := EmailNotification{
+		EventType:  OfferCreated,
+		Recipient1: mail.Address{Address: offereeEmail},
+		Recipient2: &mail.Address{Address: offerorEmail},
+		Subject:    "Security Alert: Trade offer created",
+		Body:       "The trade offer has been successfully created",
+	}
+
+	err = publishEmailNotification(email)
+	if err != nil {
+		return
 	}
 
 	c.JSON(http.StatusCreated, offer)
@@ -1122,10 +1234,12 @@ func updateTradeOfferStatus(c *gin.Context) {
 	}
 
 	// Get the offer and verify the user owns the target game
-	row := db.QueryRow("SELECT t.TargetGameID, tg.OwnerID FROM TradeOffer t JOIN Games tg ON t.TargetGameID = tg.GameID WHERE t.OfferID = ?", offerID)
+	row := db.QueryRow("SELECT t.TargetGameID, tg.OwnerID, offeror.Email, offeree.Email FROM TradeOffer t JOIN Games tg ON t.TargetGameID = tg.GameID JOIN User offeror ON t.CreatedByUserID = offeror.UserID JOIN User offeree ON tg.OwnerID = offeree.UserID WHERE t.OfferID = ?", offerID)
 	var targetGameID int
 	var gameOwnerID int
-	err = row.Scan(&targetGameID, &gameOwnerID)
+	var offereeEmail string
+	var offerorEmail string
+	err = row.Scan(&targetGameID, &gameOwnerID, &offerorEmail, &offereeEmail)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Trade offer not found"})
 		return
@@ -1140,6 +1254,31 @@ func updateTradeOfferStatus(c *gin.Context) {
 	_, err = db.Exec("UPDATE TradeOffer SET Status = ? WHERE OfferID = ?", req.Status, offerID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	email := EmailNotification{}
+
+	if req.Status == "accepted" {
+		email = EmailNotification{
+			EventType:  OfferAccepted,
+			Recipient1: mail.Address{Address: offerorEmail},
+			Recipient2: &mail.Address{Address: offereeEmail},
+			Subject:    "Offer Accepted",
+			Body:       fmt.Sprintf("Trade offer #%d has been accepted.", offerID),
+		}
+	} else {
+		email = EmailNotification{
+			EventType:  OfferRejected,
+			Recipient1: mail.Address{Address: offereeEmail},
+			Recipient2: &mail.Address{Address: offerorEmail},
+			Subject:    "Offer Rejected",
+			Body:       fmt.Sprintf("Trade offer #%d has been rejected.", offerID),
+		}
+	}
+
+	err = publishEmailNotification(email)
+	if err != nil {
 		return
 	}
 
@@ -1168,6 +1307,7 @@ func main() {
 	router.POST("/users", addUser)
 	router.PUT("/users/:id", replaceUser)
 	router.PATCH("/users/:id", updateUser)
+	router.PATCH("/users/:id/password", authMiddleware(), updatePassword)
 	router.DELETE("/users/:id", deleteUser)
 
 	// Trade offer endpoints (protected - require auth)
