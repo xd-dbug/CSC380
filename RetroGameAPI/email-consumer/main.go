@@ -5,10 +5,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"net/http"
 	"net/mail"
 	"os"
 	"strconv"
 
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/segmentio/kafka-go"
 	gomail "gopkg.in/mail.v2"
 )
@@ -24,6 +27,16 @@ var (
 
 type Event string
 
+var EmailSent = prometheus.NewCounterVec(prometheus.CounterOpts{
+	Name: "email_notifications_sent_total",
+	Help: "Total number of emails successfully sent",
+}, []string{"event_type"})
+
+var EmailFail = prometheus.NewCounterVec(prometheus.CounterOpts{
+	Name: "email_notifications_failed_total",
+	Help: "Total number of emails failed to send",
+}, []string{"event_type"})
+
 type EmailNotification struct {
 	EventType  Event         `json:"eventType"`
 	Recipient1 mail.Address  `json:"recipient1"`
@@ -32,9 +45,9 @@ type EmailNotification struct {
 	Body       string        `json:"body"`
 }
 
-func sendEmail(recipient mail.Address, subject string, body string) {
+func sendEmail(recipient mail.Address, subject string, body string, eventType Event) {
 	m := gomail.NewMessage()
-	m.SetHeader("From", SMTPUser)
+	m.SetHeader("From", "noreply@retrogameexchange.com")
 	m.SetHeader("To", recipient.String())
 	m.SetHeader("Subject", subject)
 	m.SetBody("text/html", body)
@@ -44,8 +57,10 @@ func sendEmail(recipient mail.Address, subject string, body string) {
 	// Send the email
 	if err := d.DialAndSend(m); err != nil {
 		fmt.Printf("[ERROR] Could not send email to %s: %s\n", recipient.Address, err)
+		EmailFail.With(prometheus.Labels{"event_type": string(eventType)}).Inc()
 	} else {
 		fmt.Printf("[INFO] Email sent successfully to %s\n", recipient.Address)
+		EmailSent.With(prometheus.Labels{"event_type": string(eventType)}).Inc()
 	}
 }
 
@@ -72,6 +87,9 @@ func main() {
 		SMTPPassword = "password"
 	}
 
+	prometheus.MustRegister(EmailSent)
+	prometheus.MustRegister(EmailFail)
+
 	var err error
 	SMTPPort, err = strconv.Atoi(portStr)
 	if err != nil {
@@ -93,6 +111,8 @@ func main() {
 		}
 	}(kafkaReader)
 
+	http.Handle("/metrics", promhttp.Handler())
+	go http.ListenAndServe(":2112", nil)
 	for {
 		msg, err := kafkaReader.ReadMessage(context.Background())
 		if err != nil {
@@ -108,10 +128,10 @@ func main() {
 			continue
 		}
 
-		sendEmail(notification.Recipient1, notification.Subject, notification.Body)
+		sendEmail(notification.Recipient1, notification.Subject, notification.Body, notification.EventType)
 
 		if notification.Recipient2 != nil {
-			sendEmail(*notification.Recipient2, notification.Subject, notification.Body)
+			sendEmail(*notification.Recipient2, notification.Subject, notification.Body, notification.EventType)
 		}
 
 	}

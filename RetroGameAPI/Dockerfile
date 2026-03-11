@@ -8,7 +8,7 @@ RUN go mod download
 
 COPY . .
 
-RUN CGO_ENABLED=0 GOOS=linux go build -o retro-game-api RetroGameAPI.go
+RUN CGO_ENABLED=0 GOOS=linux go build -o retro-game-api .
 
 
 FROM alpine:latest

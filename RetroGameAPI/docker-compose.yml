@@ -20,7 +20,7 @@ services:
       db:
         condition: service_healthy
       broker:
-        condition: service_started
+        condition: service_healthy
 
 
   api2:
@@ -43,7 +43,7 @@ services:
       db:
         condition: service_healthy
       broker:
-        condition: service_started
+        condition: service_healthy
 
 
   nginx:
@@ -99,27 +99,106 @@ services:
       KAFKA_NUM_PARTITIONS: 3
     networks:
       - game-network
+    healthcheck:
+      test: [ "CMD", "/opt/kafka/bin/kafka-topics.sh", "--bootstrap-server", "localhost:19092", "--list" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
 
   email-consumer:
     build:
       context: ./email-consumer
     container_name: email_consumer
+    ports:
+      - "2112:2112"
     environment:
       - KAFKA_BROKER=broker:19092
       - SMTP_HOST=sandbox.smtp.mailtrap.io
       - SMTP_PORT=25
-      - SMTP_USER=51a3488ee53d93
-      - SMTP_PASSWORD=d783494d9c8c92
+      - SMTP_USER=4de228073094fc
+      - SMTP_PASSWORD=43416146450b82
     networks:
       - game-network
     depends_on:
       broker:
+        condition: service_healthy
+
+  prometheus:
+    build:
+      context: ./prometheus
+    container_name: prometheus
+    volumes:
+      - prom_data:/prometheus
+    ports:
+      - "9090:9090"
+    networks:
+      - game-network
+
+
+  kafka-exporter:
+    image: danielqsj/kafka-exporter:latest
+    container_name: kafka-exporter
+    ports:
+      - "9308:9308"
+    networks:
+      - game-network
+    command:
+      - --kafka.server=broker:19092
+    depends_on:
+      broker:
+        condition: service_healthy
+
+  sql-exporter:
+    image: prom/mysqld-exporter
+    container_name: sql-exporter
+    ports:
+      - "9104:9104"
+    networks:
+      - game-network
+    command:
+      - --mysqld.address=CSC380_mySQL:3306
+      - --mysqld.username=root
+    environment:
+      - MYSQLD_EXPORTER_PASSWORD=abc123
+    depends_on:
+      db:
+        condition: service_healthy
+
+  nginx-exporter:
+    image: nginx/nginx-prometheus-exporter
+    container_name: nginx-exporter
+    networks:
+      - game-network
+    ports:
+      - "9113:9113"
+    command:
+      - --nginx.scrape-uri=http://nginx/stub_status
+    depends_on:
+      nginx:
         condition: service_started
+
+  grafana:
+    image: grafana/grafana-enterprise
+    container_name: grafana
+    restart: unless-stopped
+    networks:
+      - game-network
+    volumes:
+      - grafana_data:/var/lib/grafana
+    ports:
+      - "3000:3000"
+    depends_on:
+      prometheus:
+        condition: service_started
+
 
 
 
 volumes:
   db_data:
+  prom_data:
+  grafana_data:
 
 networks:
   game-network:

@@ -1,0 +1,64 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: email-consumer
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: email-consumer
+  template:
+    metadata:
+      labels:
+        app: email-consumer
+    spec:
+      # Restart policy handles the Kafka startup race condition —
+      # if the consumer starts before Kafka is ready it will crash,
+      # and K8s will automatically restart it with backoff until Kafka is up.
+      restartPolicy: Always
+      containers:
+        - name: email-consumer
+          image: retro-email-consumer:latest
+          # Use local image built by Docker Desktop — don't pull from registry
+          imagePullPolicy: Never
+          ports:
+            - containerPort: 2112  # Prometheus metrics
+          env:
+            - name: KAFKA_BROKER
+              valueFrom:
+                configMapKeyRef:
+                  name: retro-config
+                  key: KAFKA_BROKER
+            - name: SMTP_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: retro-config
+                  key: SMTP_HOST
+            - name: SMTP_PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: retro-config
+                  key: SMTP_PORT
+            - name: SMTP_USER
+              valueFrom:
+                secretKeyRef:
+                  name: retro-secrets
+                  key: SMTP_USER
+            - name: SMTP_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: retro-secrets
+                  key: SMTP_PASSWORD
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: email-consumer-service
+spec:
+  selector:
+    app: email-consumer
+  ports:
+    - port: 2112
+      targetPort: 2112
+  type: ClusterIP

@@ -6,30 +6,98 @@ info:
 servers:
   - url: 'https://api.retrogameexchange.com/v1'
 paths:
-  /games:
+  /register:
     post:
-      summary: Add a new game to the exchange list
-      operationId: addGame
+      summary: Register a new user
+      operationId: register
       requestBody:
-        description: Game object that needs to be added to the exchange
+        description: User registration data
         required: true
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/Game'
+              $ref: '#/components/schemas/RegisterRequest'
       responses:
         '201':
-          description: Game created successfully
+          description: User registered successfully
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Game'
+                $ref: '#/components/schemas/User'
         '400':
           description: Invalid input
+        '409':
+          description: Username already exists
+  /login:
+    post:
+      summary: Login user and return JWT token
+      operationId: login
+      requestBody:
+        description: User login credentials
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '200':
+          description: Login successful
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoginResponse'
+        '401':
+          description: Invalid username or password
+  /games:
+    get:
+      summary: Get all games in the exchange
+      operationId: getGames
+      responses:
+        '200':
+          description: List of games
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Game'
+    post:
+      summary: Add a new game to the exchange list
+      operationId: addGame
+      security:
+        - bearerAuth: []
+      requestBody:
+        description: Game object or array of game objects that needs to be added
+        required: true
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - $ref: '#/components/schemas/Game'
+                - type: array
+                  items:
+                    $ref: '#/components/schemas/Game'
+      responses:
+        '201':
+          description: Game(s) created successfully
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/Game'
+                  - type: array
+                    items:
+                      $ref: '#/components/schemas/Game'
+        '400':
+          description: Invalid input
+        '401':
+          description: User not authenticated
   /games/{gameId}:
     put:
       summary: Replace all properties of a game (full update)
       operationId: replaceGame
+      security:
+        - bearerAuth: []
       parameters:
         - name: gameId
           in: path
@@ -51,11 +119,19 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Game'
+        '400':
+          description: Invalid input
+        '401':
+          description: User not authenticated
+        '403':
+          description: Forbidden (not your game)
         '404':
           description: Game not found
     patch:
       summary: Update certain properties of a game (partial update)
       operationId: updateGame
+      security:
+        - bearerAuth: []
       parameters:
         - name: gameId
           in: path
@@ -77,11 +153,19 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Game'
+        '400':
+          description: Invalid input
+        '401':
+          description: User not authenticated
+        '403':
+          description: Forbidden (not your game)
         '404':
           description: Game not found
     delete:
       summary: Remove a game from the exchange list
       operationId: deleteGame
+      security:
+        - bearerAuth: []
       parameters:
         - name: gameId
           in: path
@@ -92,12 +176,28 @@ paths:
       responses:
         '204':
           description: Game removed successfully
+        '401':
+          description: User not authenticated
+        '403':
+          description: Forbidden (not your game)
         '404':
           description: Game not found
 
   /users:
+    get:
+      summary: Get all users
+      operationId: getUsers
+      responses:
+        '200':
+          description: List of users
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/User'
     post:
-      summary: Add a new user to the exchange
+      summary: Add a new user (deprecated - use /register for full auth)
       operationId: addUser
       requestBody:
         description: User object that needs to be added
@@ -105,14 +205,22 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/User'
+              oneOf:
+                - $ref: '#/components/schemas/User'
+                - type: array
+                  items:
+                    $ref: '#/components/schemas/User'
       responses:
         '201':
-          description: User created successfully
+          description: User(s) created successfully
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/User'
+                oneOf:
+                  - $ref: '#/components/schemas/User'
+                  - type: array
+                    items:
+                      $ref: '#/components/schemas/User'
         '400':
           description: Invalid input
   /users/{userId}:
@@ -183,8 +291,159 @@ paths:
           description: User removed successfully
         '404':
           description: User not found
+  /users/{userId}/games:
+    get:
+      summary: Get games owned by a specific user
+      operationId: getGamesByUser
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          description: ID of the user
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: List of games owned by the user
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Game'
+        '400':
+          description: Invalid user ID
+  /users/{userId}/password:
+    patch:
+      summary: Change user password
+      operationId: updatePassword
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          description: ID of the user to change password for
+          schema:
+            type: integer
+      requestBody:
+        description: Password update request
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PasswordUpdateRequest'
+      responses:
+        '200':
+          description: Password updated successfully
+        '400':
+          description: Invalid input
+        '401':
+          description: Unauthorized
+        '403':
+          description: Forbidden (cannot change others' password)
+        '404':
+          description: User not found
 
+  /trade-offers:
+    post:
+      summary: Create a new trade offer
+      operationId: createTradeOffer
+      security:
+        - bearerAuth: []
+      requestBody:
+        description: Trade offer request data
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TradeOfferRequest'
+      responses:
+        '201':
+          description: Trade offer created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TradeOffer'
+        '400':
+          description: Invalid input or business logic error
+        '401':
+          description: User not authenticated
+        '403':
+          description: Forbidden (not owning the offered game)
+        '404':
+          description: Game not found
+  /trade-offers/incoming:
+    get:
+      summary: Get incoming trade offers
+      operationId: getIncomingOffers
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: List of incoming trade offers
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/TradeOfferResponse'
+        '401':
+          description: User not authenticated
+  /trade-offers/outgoing:
+    get:
+      summary: Get outgoing trade offers
+      operationId: getOutgoingOffers
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: List of outgoing trade offers
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/TradeOfferResponse'
+        '401':
+          description: User not authenticated
+  /trade-offers/{offerId}/status:
+    patch:
+      summary: Accept or reject a trade offer
+      operationId: updateTradeOfferStatus
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: offerId
+          in: path
+          required: true
+          description: ID of the trade offer
+          schema:
+            type: integer
+      requestBody:
+        description: Status update request
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StatusUpdateRequest'
+      responses:
+        '200':
+          description: Trade offer status updated
+        '400':
+          description: Invalid input
+        '401':
+          description: User not authenticated
+        '403':
+          description: Forbidden (not owning the target game)
+        '404':
+          description: Trade offer not found
 components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
   schemas:
     Game:
       type: object
@@ -195,7 +454,6 @@ components:
       properties:
         id:
           type: integer
-          format: int64
           readOnly: true
           example: 1
         title:
@@ -210,6 +468,10 @@ components:
         condition:
           type: string
           example: "Mint"
+        ownerId:
+          type: integer
+          readOnly: true
+          example: 101
         madeBy:
           $ref: '#/components/schemas/Company'
 
@@ -239,7 +501,6 @@ components:
       properties:
         id:
           type: integer
-          format: int64
           readOnly: true
           example: 101
         username:
@@ -276,7 +537,6 @@ components:
       properties: 
         id:
           type: integer
-          format: int64
           example: 50
         companyName:
           type: string
@@ -287,5 +547,126 @@ components:
         location:
           type: string
           example: "Kyoto, Japan"
+
+    TradeOffer:
+      type: object
+      properties:
+        id:
+          type: integer
+        createdByUserId:
+          type: integer
+        targetGameId:
+          type: integer
+        offeredGameId:
+          type: integer
+        status:
+          type: string
+          enum: [pending, accepted, rejected]
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    TradeOfferRequest:
+      type: object
+      required:
+        - targetGameId
+        - offeredGameId
+      properties:
+        targetGameId:
+          type: integer
+        offeredGameId:
+          type: integer
+
+    TradeOfferResponse:
+      type: object
+      properties:
+        id:
+          type: integer
+        createdByUserId:
+          type: integer
+        createdByUser:
+          $ref: '#/components/schemas/User'
+        targetGameId:
+          type: integer
+        targetGame:
+          $ref: '#/components/schemas/Game'
+        offeredGameId:
+          type: integer
+        offeredGame:
+          $ref: '#/components/schemas/Game'
+        status:
+          type: string
+          enum: [pending, accepted, rejected]
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    LoginRequest:
+      type: object
+      required:
+        - username
+        - password
+      properties:
+        username:
+          type: string
+        password:
+          type: string
+          format: password
+
+    LoginResponse:
+      type: object
+      properties:
+        token:
+          type: string
+        userId:
+          type: integer
+        message:
+          type: string
+
+    RegisterRequest:
+      type: object
+      required:
+        - username
+        - email
+        - password
+      properties:
+        username:
+          type: string
+        email:
+          type: string
+          format: email
+        fullName:
+          type: string
+        password:
+          type: string
+          format: password
+
+    PasswordUpdateRequest:
+      type: object
+      required:
+        - currentPassword
+        - newPassword
+      properties:
+        currentPassword:
+          type: string
+          format: password
+        newPassword:
+          type: string
+          format: password
+
+    StatusUpdateRequest:
+      type: object
+      required:
+        - status
+      properties:
+        status:
+          type: string
+          enum: [accepted, rejected]
         
 

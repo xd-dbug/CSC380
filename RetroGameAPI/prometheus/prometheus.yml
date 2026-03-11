@@ -1,0 +1,23 @@
+global:
+  scrape_interval: 15s
+
+scrape_configs:
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]
+  - job_name: api
+    static_configs:
+      - targets: ["api1:8080"]
+      - targets: ["api2:8080"]
+  - job_name: sql
+    static_configs:
+      - targets: ["sql-exporter:9104"]
+  - job_name: kafka
+    static_configs:
+      - targets: ["kafka-exporter:9308"]
+  - job_name: email-consumer
+    static_configs:
+      - targets: ["email-consumer:2112"]
+  - job_name: nginx
+    static_configs:
+      - targets: ["nginx-exporter:9113"]

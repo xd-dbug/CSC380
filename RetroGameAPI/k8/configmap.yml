@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: retro-config
+data:
+  DB_HOST: mysql-service
+  DB_PORT: "3306"
+  DB_USER: root
+  DB_NAME: RetroGameDB
+  KAFKA_BROKER: kafka-service:19092
+  SMTP_HOST: sandbox.smtp.mailtrap.io
+  SMTP_PORT: "25"

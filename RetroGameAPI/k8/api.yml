@@ -1,0 +1,134 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: retro-api
+spec:
+  replicas: 2  # HPA will manage this between 2-6
+  selector:
+    matchLabels:
+      app: retro-api
+  template:
+    metadata:
+      labels:
+        app: retro-api
+    spec:
+      initContainers:
+        # Blocks API startup until MySQL is accepting connections.
+        # Replaces Docker Compose's depends_on + healthcheck behavior.
+        - name: wait-for-mysql
+          image: busybox:latest
+          command:
+            - sh
+            - -c
+            - |
+              until nc -z mysql-service 3306; do
+                echo "Waiting for MySQL...";
+                sleep 3;
+              done;
+              echo "MySQL is ready."
+        # Blocks API startup until Kafka is accepting connections.
+        - name: wait-for-kafka
+          image: busybox:latest
+          command:
+            - sh
+            - -c
+            - |
+              until nc -z kafka-service 19092; do
+                echo "Waiting for Kafka...";
+                sleep 3;
+              done;
+              echo "Kafka is ready."
+      containers:
+        - name: retro-api
+          image: retro-game-api:latest
+          imagePullPolicy: Never
+          ports:
+            - containerPort: 8080
+          env:
+            - name: INSTANCE_NAME
+              valueFrom:
+                fieldRef:
+                  # Uses the pod name as the instance identifier,
+                  # replacing the hardcoded api1/api2 from Docker Compose
+                  fieldPath: metadata.name
+            - name: DB_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: retro-config
+                  key: DB_HOST
+            - name: DB_PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: retro-config
+                  key: DB_PORT
+            - name: DB_USER
+              valueFrom:
+                configMapKeyRef:
+                  name: retro-config
+                  key: DB_USER
+            - name: DB_NAME
+              valueFrom:
+                configMapKeyRef:
+                  name: retro-config
+                  key: DB_NAME
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: retro-secrets
+                  key: DB_PASSWORD
+            - name: JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: retro-secrets
+                  key: JWT_SECRET
+            - name: KAFKA_BROKER
+              valueFrom:
+                configMapKeyRef:
+                  name: retro-config
+                  key: KAFKA_BROKER
+          readinessProbe:
+            httpGet:
+              path: /metrics
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 5
+          resources:
+            requests:
+              cpu: 100m      # HPA uses this to calculate utilization percentage
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: retro-api-service
+spec:
+  selector:
+    app: retro-api
+  ports:
+    - port: 8080
+      targetPort: 8080
+  type: ClusterIP
+
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: retro-api-hpa
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: retro-api
+  minReplicas: 2
+  maxReplicas: 6
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70

@@ -1,0 +1,263 @@
+# ─── prometheus.yaml ──────────────────────────────────────────────────────────
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-config
+data:
+  prometheus.yml: |
+    global:
+      scrape_interval: 15s
+    scrape_configs:
+      - job_name: prometheus
+        static_configs:
+          - targets: ["localhost:9090"]
+      - job_name: api
+        # Scrapes all API pods via the K8s Service — replaces the static api1/api2 targets
+        static_configs:
+          - targets: ["retro-api-service:8080"]
+      - job_name: sql
+        static_configs:
+          - targets: ["sql-exporter-service:9104"]
+      - job_name: kafka
+        static_configs:
+          - targets: ["kafka-exporter-service:9308"]
+      - job_name: email-consumer
+        static_configs:
+          - targets: ["email-consumer-service:2112"]
+      - job_name: nginx
+        static_configs:
+          - targets: ["nginx-exporter-service:9113"]
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: prometheus-pvc
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: prometheus
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: prometheus
+  template:
+    metadata:
+      labels:
+        app: prometheus
+    spec:
+      containers:
+        - name: prometheus
+          image: prom/prometheus:latest
+          ports:
+            - containerPort: 9090
+          volumeMounts:
+            - name: config
+              mountPath: /etc/prometheus/prometheus.yml
+              subPath: prometheus.yml
+            - name: data
+              mountPath: /prometheus
+      volumes:
+        - name: config
+          configMap:
+            name: prometheus-config
+        - name: data
+          persistentVolumeClaim:
+            claimName: prometheus-pvc
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: prometheus-service
+spec:
+  selector:
+    app: prometheus
+  ports:
+    - port: 9090
+      targetPort: 9090
+      nodePort: 30090
+  type: NodePort   # Accessible at http://localhost:30090
+
+---
+# ─── grafana.yaml ─────────────────────────────────────────────────────────────
+
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: grafana-pvc
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: grafana
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: grafana
+  template:
+    metadata:
+      labels:
+        app: grafana
+    spec:
+      containers:
+        - name: grafana
+          image: grafana/grafana-enterprise:latest
+          ports:
+            - containerPort: 3000
+          volumeMounts:
+            - name: grafana-data
+              mountPath: /var/lib/grafana
+      volumes:
+        - name: grafana-data
+          persistentVolumeClaim:
+            claimName: grafana-pvc
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: grafana-service
+spec:
+  selector:
+    app: grafana
+  ports:
+    - port: 3000
+      targetPort: 3000
+      nodePort: 30030
+  type: NodePort   # Accessible at http://localhost:30030
+
+---
+# ─── exporters.yaml ───────────────────────────────────────────────────────────
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kafka-exporter
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: kafka-exporter
+  template:
+    metadata:
+      labels:
+        app: kafka-exporter
+    spec:
+      containers:
+        - name: kafka-exporter
+          image: danielqsj/kafka-exporter:latest
+          args:
+            - --kafka.server=kafka-service:19092
+          ports:
+            - containerPort: 9308
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kafka-exporter-service
+spec:
+  selector:
+    app: kafka-exporter
+  ports:
+    - port: 9308
+      targetPort: 9308
+  type: ClusterIP
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sql-exporter
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: sql-exporter
+  template:
+    metadata:
+      labels:
+        app: sql-exporter
+    spec:
+      containers:
+        - name: sql-exporter
+          image: prom/mysqld-exporter:latest
+          args:
+            - --mysqld.address=mysql-service:3306
+            - --mysqld.username=root
+          ports:
+            - containerPort: 9104
+          env:
+            - name: MYSQLD_EXPORTER_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: retro-secrets
+                  key: DB_PASSWORD
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: sql-exporter-service
+spec:
+  selector:
+    app: sql-exporter
+  ports:
+    - port: 9104
+      targetPort: 9104
+  type: ClusterIP
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nginx-exporter
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: nginx-exporter
+  template:
+    metadata:
+      labels:
+        app: nginx-exporter
+    spec:
+      containers:
+        - name: nginx-exporter
+          image: nginx/nginx-prometheus-exporter:latest
+          args:
+            - --nginx.scrape-uri=http://nginx-service/stub_status
+          ports:
+            - containerPort: 9113
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: nginx-exporter-service
+spec:
+  selector:
+    app: nginx-exporter
+  ports:
+    - port: 9113
+      targetPort: 9113
+  type: ClusterIP
